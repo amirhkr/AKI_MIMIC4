@@ -1,0 +1,5 @@
+UPDATE mimic_derived."all_scr_day01_SB_raw"
+SET aki_kdigo_grade_1 = true,
+    aki_kdigo_grade_2 = true,
+    aki_kdigo_grade_3 = true
+WHERE scr_umol_l>=353.6;

@@ -1,0 +1,117 @@
+DROP TABLE IF EXISTS mimic_derived.all_scr_preadmission_AGGREGATE_75_180_0days; CREATE TABLE mimiciv.mimic_derived.all_scr_preadmission_AGGREGATE_75_180_0days AS 
+
+WITH exclusions AS (
+    SELECT all_scr.*
+	
+--egfr_CKD_EPI WITHOUT ethnicity with maximum Scr value
+	,round(141*POWER(LEAST(creatinine_mg_dl/case when ie.female=0 then 0.9 else 0.7 end,1),case when ie.female=0 then -0.411 else -0.329 end )
+	*
+	POWER(GREATEST(creatinine_mg_dl/case when ie.female=0 then 0.9 else 0.7 end,1),-1.209)
+	*
+	POWER(0.993,ie.age)
+	*
+	case when ie.female=1 then 1.018 else 1 end) as egfr_EPI_scr
+    
+	--egfr_CKD_MRDR WITHOUT ethnicity with maximum Scr value
+	,round(175*POWER(creatinine_mg_dl,-1.154)
+	*power(ie.age,-0.203) -- *case when set2.ethnicity = 'BLACK/AFRICAN AMERICAN' then 1.212 else 1 end
+	* case when ie.female=1 then 0.742 when ie.female=0 then 1 end)
+	
+	AS egfr_MDRD_scr
+	
+    FROM mimic_derived."all_scr_SB_preadmisssion_raw_75_180_0days" all_scr JOIN mimic_derived.icu_age ie
+	ON ie.stay_id=all_scr.stay_id
+
+)
+
+, kdigo_order AS (
+select
+ stay_id
+,hadm_id
+,subject_id
+,aki_kdigo_grade_1
+,aki_kdigo_grade_2
+,aki_kdigo_grade_3
+,day_of_test
+,ckd
+,is_mdrd
+,egfr_EPI_scr
+,egfr_MDRD_scr
+                     
+,MIN(CASE WHEN aki_kdigo_grade_1=true  THEN day_of_test ELSE 9999999 END) OVER(PARTITION BY stay_id, subject_id ORDER BY aki_kdigo_grade_1 desc,day_of_test asc) AS day_detection_kdigo_grade_1 -- get the first lab rsult by , earlierst chart time
+,MIN(CASE WHEN aki_kdigo_grade_2=true  THEN day_of_test ELSE 9999999 END) OVER(PARTITION BY stay_id, subject_id ORDER BY aki_kdigo_grade_2 desc,day_of_test asc) AS day_detection_kdigo_grade_2 -- get the first lab rsult by , earlierst chart time
+,MIN(CASE WHEN aki_kdigo_grade_3=true  THEN day_of_test ELSE 9999999 END) OVER(PARTITION BY stay_id, subject_id ORDER BY aki_kdigo_grade_3 desc,day_of_test asc) AS day_detection_kdigo_grade_3 -- get the first lab rsult by , earlierst chart time
+
+,aki_mkdigo_grade_1
+,aki_mkdigo_grade_2
+,aki_mkdigo_grade_3
+    
+,MIN(CASE WHEN aki_mkdigo_grade_1=true  THEN day_of_test ELSE 9999999 END) OVER(PARTITION BY stay_id, subject_id ORDER BY aki_mkdigo_grade_1 desc,day_of_test asc) AS day_detection_mkdigo_grade_1 -- get the first lab rsult by , earlierst chart time
+,MIN(CASE WHEN aki_mkdigo_grade_2=true  THEN day_of_test ELSE 9999999 END) OVER(PARTITION BY stay_id, subject_id ORDER BY aki_mkdigo_grade_2 desc,day_of_test asc) AS day_detection_mkdigo_grade_2 -- get the first lab rsult by , earlierst chart time
+,MIN(CASE WHEN aki_mkdigo_grade_3=true  THEN day_of_test ELSE 9999999 END) OVER(PARTITION BY stay_id, subject_id ORDER BY aki_mkdigo_grade_3 desc,day_of_test asc) AS day_detection_mkdigo_grade_3 -- get the first lab rsult by , earlierst chart time
+
+from exclusions
+)
+
+, final_set AS(
+    SELECT 
+stay_id
+,hadm_id               
+,subject_id
+
+,MIN(ckd) as ckd
+,MIN(egfr_EPI_scr) AS egfr_EPI_scr
+,MIN(egfr_MDRD_scr) AS egfr_MDRD_scr
+,MAX(is_mdrd) AS is_mdrd
+	
+-- aggregate KDIGO
+,bool_or(aki_kdigo_grade_1) AS aki_kdigo_grade_1_bool
+,bool_or(aki_kdigo_grade_2) AS aki_kdigo_grade_2_bool
+,bool_or(aki_kdigo_grade_3) AS aki_kdigo_grade_3_bool
+
+,MIN(day_detection_kdigo_grade_1) AS day_detection_kdigo_grade_1
+,MIN(day_detection_kdigo_grade_2) AS day_detection_kdigo_grade_2
+,MIN(day_detection_kdigo_grade_3) AS day_detection_kdigo_grade_3
+
+
+-- aggregate MKDIGO
+,bool_or(aki_mkdigo_grade_1) AS aki_mkdigo_grade_1_bool
+,bool_or(aki_mkdigo_grade_2) AS aki_mkdigo_grade_2_bool
+,bool_or(aki_mkdigo_grade_3) AS aki_mkdigo_grade_3_bool
+
+,MIN(day_detection_mkdigo_grade_1) AS day_detection_mkdigo_grade_1
+,MIN(day_detection_kdigo_grade_2) AS day_detection_mkdigo_grade_2
+,MIN(day_detection_mkdigo_grade_3) AS day_detection_mkdigo_grade_3
+
+FROM kdigo_order
+GROUP BY stay_id,hadm_id,subject_id
+)
+
+
+SELECT 
+stay_id
+,hadm_id
+,subject_id
+,ckd
+,is_mdrd
+,egfr_EPI_scr
+,egfr_MDRD_scr
+
+,CASE WHEN  aki_kdigo_grade_1_bool=true THEN 1 ELSE 0 END AS aki_kdigo_grade_1
+,CASE WHEN  aki_kdigo_grade_2_bool=true THEN 1 ELSE 0 END AS aki_kdigo_grade_2
+,CASE WHEN  aki_kdigo_grade_3_bool=true THEN 1 ELSE 0 END AS aki_kdigo_grade_3
+
+,day_detection_kdigo_grade_1
+,day_detection_kdigo_grade_2
+,day_detection_kdigo_grade_3
+
+
+, CASE WHEN  aki_mkdigo_grade_1_bool=true THEN 1 ELSE 0 END AS aki_mkdigo_grade_1
+,CASE WHEN  aki_mkdigo_grade_2_bool=true THEN 1 ELSE 0 END AS aki_mkdigo_grade_2
+,CASE WHEN  aki_mkdigo_grade_3_bool=true THEN 1 ELSE 0 END AS aki_mkdigo_grade_3
+
+,day_detection_mkdigo_grade_1
+,day_detection_mkdigo_grade_2
+,day_detection_mkdigo_grade_3
+
+FROM final_set

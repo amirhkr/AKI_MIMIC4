@@ -1,0 +1,91 @@
+DROP TABLE IF EXISTS mimic_derived.all_scr_day1plus_SB; CREATE TABLE mimic_derived.all_scr_day1plus_SB AS 
+
+
+WITH set0 as(
+SELECT
+    ie.stay_id
+    , ie.hadm_id
+	,ie.subject_id
+	,ie.intime
+	,le.charttime
+    ,bl.ckd
+	,le.valuenum AS creatinine_mg_dl
+--     ,AVG(le.valuenum) as creatinine_mg_dl
+    ,bl.scr_baseline
+    , CASE WHEN le.charttime >= ie.intime THEN DATE_PART('day',(le.charttime - ie.intime))+1 
+           WHEN le.charttime < ie.intime  and DATE_PART('day',(ie.intime - le.charttime))!=0 THEN DATE_PART('day',(ie.intime - le.charttime))*(-1)
+           WHEN le.charttime < ie.intime  and DATE_PART('day',(ie.intime - le.charttime))=0 THEN DATE_PART('day',(ie.intime - le.charttime))+1
+    END as day_of_test
+
+    
+FROM mimic_icu.icustays ie LEFT join mimic_hosp.labevents le
+    
+    ON ie.subject_id=le.subject_id
+    AND le.ITEMID = 50912
+	AND le.VALUENUM is not null
+    AND le.VALUENUM >=0.2 AND le.VALUENUM <=10
+    AND (le.charttime between (ie.intime - INTERVAL '6 HOUR') AND (ie.intime + INTERVAl '3 DAY'))
+	
+LEFT JOIN mimic_derived.creatinine_baseline bl
+	ON ie.hadm_id=bl.hadm_id
+	AND bl.scr_baseline>0
+	AND bl.scr_baseline<=10
+)	
+
+, first_admission as(
+select set0.*
+        ,DENSE_RANK() OVER (partition by subject_id ORDER by intime ASC) AS rank_num
+    from set0
+
+)
+
+, set1 AS(
+	select *
+	from first_admission
+	where rank_num=1
+	
+UNION
+
+select
+    stay_id
+    , hadm_id
+	,subject_id
+	,intime
+	,charttime
+    ,ckd
+    ,scr_baseline as creatinine_mg_dl
+    ,scr_baseline
+    ,1 as day_of_test
+	,rank_num
+from first_admission
+	where rank_num=1
+	)
+
+,set2 AS(
+select 
+
+    stay_id
+    , hadm_id
+	,subject_id
+    ,ckd
+    ,creatinine_mg_dl
+    ,round((creatinine_mg_dl*88.4)::numeric,2) AS scr_umol_l
+    ,scr_baseline
+    ,day_of_test
+from set1
+where stay_id in(
+    select stay_id
+    from set1
+    where day_of_test in (0,1,2,3) AND creatinine_mg_dl is not null
+    group by stay_id
+    having count(distinct day_of_test) >= 4
+)
+)
+
+
+select stay_id,hadm_id,subject_id,day_of_test,ckd
+    , creatinine_mg_dl
+    ,scr_umol_l
+    from set2
+	where day_of_test>0
+    order by stay_id,hadm_id,subject_id,day_of_test

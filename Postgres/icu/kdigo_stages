@@ -1,0 +1,107 @@
+-- This query checks if the patient had AKI according to KDIGO.
+-- AKI is calculated every time a creatinine or urine output measurement occurs.
+-- Baseline creatinine is defined as the lowest creatinine in the past 7 days.
+
+-- get creatinine stages
+DROP TABLE IF EXISTS mimic_derived.kdigo_stages; CREATE TABLE mimic_derived.kdigo_stages AS 
+
+with cr_stg AS
+(
+  SELECT
+    cr.stay_id
+    , cr.charttime
+    , cr.creat_low_past_7day 
+    , cr.creat_low_past_48hr
+    , cr.creat
+	
+	, CASE when cr.creat >= (cr.creat_low_past_48hr+0.3) OR cr.creat >= (cr.creat_low_past_7day*1.5) then true else false end as aki_kdigo_grade_1
+	, case when cr.creat >= (cr.creat_low_past_7day*2.0) then true else false end as aki_kdigo_grade_2
+	, CASE WHEN (cr.creat >= (cr.creat_low_past_7day*3.0)) OR (cr.creat >= 4 and (cr.creat_low_past_48hr <= 3.7 OR cr.creat >= (1.5*cr.creat_low_past_7day))) then true else false END as aki_kdigo_grade_3
+	
+
+--     else 0 end as aki_stage_creat
+  FROM mimic_derived.kdigo_creatinine cr
+-- 	where cr.stay_id=30003125
+)
+
+, exclusions AS (
+	select ie.stay_id,ie.hadm_id,ie.subject_id
+,aki_kdigo_grade_1
+,aki_kdigo_grade_2
+,aki_kdigo_grade_3
+,ie.intime
+	, le.charttime
+    , CASE WHEN le.charttime >= ie.intime THEN DATE_PART('day',(le.charttime - ie.intime))+1 
+           WHEN le.charttime < ie.intime  and DATE_PART('day',(ie.intime - le.charttime))!=0 THEN DATE_PART('day',(ie.intime - le.charttime))*(-1)
+           WHEN le.charttime < ie.intime  and DATE_PART('day',(ie.intime - le.charttime))=0 THEN DATE_PART('day',(ie.intime - le.charttime))
+    END as day_of_test
+FROM mimic_icu.icustays ie INNER JOIN cr_stg le
+ON ie.stay_id=le.stay_id
+order by stay_id
+				 )
+-- AND ie.stay_id=30003125
+
+-- WITH exclusions AS (
+--     SELECT *
+--     FROM mimic_derived.all_scr_pre_icu_raw
+
+-- )
+
+, kdigo_order AS (
+select
+ stay_id
+,hadm_id
+,subject_id
+,aki_kdigo_grade_1
+,aki_kdigo_grade_2
+,aki_kdigo_grade_3
+-- ,day_of_test
+-- 	,intime
+-- 	, charttime
+                     
+,MIN(CASE WHEN aki_kdigo_grade_1=true  THEN day_of_test ELSE 9999999 END) OVER(PARTITION BY stay_id, subject_id ORDER BY aki_kdigo_grade_1 desc,day_of_test asc) AS day_detection_kdigo_grade_1 -- get the first lab rsult by , earlierst chart time
+,MIN(CASE WHEN aki_kdigo_grade_2=true  THEN day_of_test ELSE 9999999 END) OVER(PARTITION BY stay_id, subject_id ORDER BY aki_kdigo_grade_2 desc,day_of_test asc) AS day_detection_kdigo_grade_2 -- get the first lab rsult by , earlierst chart time
+,MIN(CASE WHEN aki_kdigo_grade_3=true  THEN day_of_test ELSE 9999999 END) OVER(PARTITION BY stay_id, subject_id ORDER BY aki_kdigo_grade_3 desc,day_of_test asc) AS day_detection_kdigo_grade_3 -- get the first lab rsult by , earlierst chart time
+
+
+from exclusions
+)
+
+, final_set AS(
+    SELECT 
+stay_id
+,hadm_id               
+,subject_id
+
+-- 	,intime
+-- 	, charttime
+-- 	,day_of_test
+-- aggregate KDIGO
+,bool_or(aki_kdigo_grade_1) AS aki_kdigo_grade_1_bool
+,bool_or(aki_kdigo_grade_2) AS aki_kdigo_grade_2_bool
+,bool_or(aki_kdigo_grade_3) AS aki_kdigo_grade_3_bool
+
+,MIN(day_detection_kdigo_grade_1) AS day_detection_kdigo_grade_1
+,MIN(day_detection_kdigo_grade_2) AS day_detection_kdigo_grade_2
+,MIN(day_detection_kdigo_grade_3) AS day_detection_kdigo_grade_3
+
+
+FROM kdigo_order
+GROUP BY stay_id,hadm_id,subject_id	)
+
+SELECT 
+stay_id
+,hadm_id
+,subject_id
+
+,CASE WHEN  aki_kdigo_grade_1_bool=true THEN 1 ELSE 0 END AS aki_kdigo_grade_1
+,CASE WHEN  aki_kdigo_grade_2_bool=true THEN 1 ELSE 0 END AS aki_kdigo_grade_2
+,CASE WHEN  aki_kdigo_grade_3_bool=true THEN 1 ELSE 0 END AS aki_kdigo_grade_3
+
+,day_detection_kdigo_grade_1
+,day_detection_kdigo_grade_2
+,day_detection_kdigo_grade_3
+
+
+
+FROM final_set

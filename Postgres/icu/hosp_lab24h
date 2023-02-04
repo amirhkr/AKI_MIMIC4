@@ -1,0 +1,152 @@
+-- THIS SCRIPT IS AUTOMATICALLY GENERATED. DO NOT EDIT IT DIRECTLY.
+DROP TABLE IF EXISTS mimic_derived.aki_hosp_lab24h; CREATE TABLE mimic_derived.aki_hosp_lab24h AS 
+-- extract chemistry labs
+-- excludes point of care tests (very rare)
+-- blood gas measurements are *not* included in this query
+-- instead they are in bg.sql
+With set0 AS(
+  SELECT
+    le.*,
+    ad.admittime
+-- 	,le.charttime
+--     ,ROW_NUMBER() OVER(PARTITION BY ad.hadm_id,ad.subject_id, le.itemid ORDER BY le.charttime ASC) AS row_number -- get the first lab rsult by , earlierst chart time
+     ,DENSE_RANK() OVER (partition by ad.subject_id ORDER by admittime ASC) AS rank_num
+	FROM mimic_core.admissions ad
+    LEFT JOIN mimic_hosp.labevents le
+    ON le.hadm_id = ad.hadm_id
+	where le.itemid IN (50862,50882,51006,50893,50902,50912,50983,50971,50889,51301,
+    51221, -- hematocrit
+    51222, -- hemoglobin
+    51265, -- platelets
+    51301,  -- WBC
+                        
+    50861, 	-- Alanine Aminotransferase (ALT)
+    50878, 	-- Asparate Aminotransferase (AST)
+    50954, 	-- Lactate Dehydrogenase (LD)
+    50863, 	--Alkaline Phosphatase
+    
+    50931, -- glucose
+                        
+    51237, -- INR(PT)
+    51275, -- PTT
+    51274  -- PT                  
+    )
+
+     AND le.charttime >= (ad.admittime - INTERVAL '12 HOUR')
+
+        AND le.charttime <= (ad.admittime + INTERVAL '1 DAY')
+-- 	AND le.charttime <=le.ad.
+--         AND ((DATE_PART('day',(le.charttime - ad.admittime)))+1)<=8
+--         AND le.valuenum is not null
+-- AND ad.subject_id=10000032
+)
+
+ , lab AS(
+	select *
+	from set0
+	where rank_num=1
+ )
+	
+
+, final_set AS(
+    SELECT 
+    le.subject_id
+    , le.hadm_id
+
+-- 	,le.admittime
+-- 	,le.charttime
+-- 	,rank_num
+--   , le.specimen_id
+
+  -- convert from itemid into a meaningful column
+  , MAX(CASE WHEN itemid = 50862 AND valuenum <=   10 AND valuenum >= 0.5  THEN valuenum ELSE NULL END) AS albumin_max
+  , MIN(CASE WHEN itemid = 50862 AND valuenum <=   10 AND valuenum >= 0.5  THEN valuenum ELSE NULL END) AS albumin_min
+    
+  , MAX(CASE WHEN itemid = 50882 AND valuenum <= 10000 THEN valuenum ELSE NULL END) AS bicarbonate_max
+  , MIN(CASE WHEN itemid = 50882 AND valuenum <= 10000 THEN valuenum ELSE NULL END) AS bicarbonate_min
+    
+  , MAX(CASE WHEN itemid = 51006 AND valuenum <=   280 AND valuenum >=   2.8 THEN valuenum ELSE NULL END) AS bun_max -- mg/dL
+  , MIN(CASE WHEN itemid = 51006 AND valuenum <=   280 AND valuenum >=   2.8 THEN valuenum ELSE NULL END) AS bun_min 
+    
+  , MAX(CASE WHEN itemid = 50893 AND valuenum <= 10000 THEN valuenum ELSE valuenum END) AS calcium_max
+  , MIN(CASE WHEN itemid = 50893 AND valuenum <= 10000 THEN valuenum ELSE valuenum END) AS calcium_min
+    
+  , MAX(CASE WHEN itemid = 50902 AND valuenum <= 10000 THEN valuenum ELSE NULL END) AS chloride_max
+  , MIN(CASE WHEN itemid = 50902 AND valuenum <= 10000 THEN valuenum ELSE NULL END) AS chloride_min
+
+  , MAX(CASE WHEN itemid = 50912 AND valuenum <=   17 AND valuenum >=   0.2 THEN valuenum ELSE NULL END) AS creatinine_mg_dl_max -- mg/dL
+  , MIN(CASE WHEN itemid = 50912 AND valuenum <=   17 AND valuenum >=   0.2 THEN valuenum ELSE NULL END) AS creatinine_mg_dl_min -- mg/dL
+
+
+  , MAX(CASE WHEN itemid = 50931 AND valuenum <=   1000 THEN valuenum ELSE NULL END) AS glucose_max
+  , MIN(CASE WHEN itemid = 50931 AND valuenum <=   1000 THEN valuenum ELSE NULL END) AS glucose_min
+
+
+--   , MAX(CASE WHEN itemid = 50912 AND valuenum <=   17 AND valuenum >=   0.2 THEN round((valuenum*88.4)::numeric,2) ELSE NULL END) AS creatinine_ummol_l_max -- mg/dL
+--   , MIN(CASE WHEN itemid = 50912 AND valuenum <=   17 AND valuenum >=   0.2 THEN round((valuenum*88.4)::numeric,2) ELSE NULL END) AS creatinine_ummol_l_min -- mg/dL
+
+  , MAX(CASE WHEN itemid = 50983 AND valuenum <=   200  THEN valuenum ELSE NULL END) AS sodium_max
+  , MIN(CASE WHEN itemid = 50983 AND valuenum <=   200  THEN valuenum ELSE NULL END) AS sodium_min
+    
+  , MAX(CASE WHEN itemid = 50971 AND valuenum <=    12 AND valuenum >=  1.5  THEN valuenum ELSE NULL END) AS potassium_max  --mEq/L
+  , MIN(CASE WHEN itemid = 50971 AND valuenum <=    12 AND valuenum >=  1.5  THEN valuenum ELSE NULL END) AS potassium_min  --mEq/L
+    
+  , MAX(CASE WHEN itemid = 50889 AND valuenum <= 1000  THEN valuenum ELSE valuenum END) AS CRP_max -- mg/dL
+  , MIN(CASE WHEN itemid = 50889 AND valuenum <= 1000  THEN valuenum ELSE valuenum END) AS CRP_min -- mg/dL
+
+  
+  
+    --   blood count
+  , MAX(CASE WHEN itemid = 51221  THEN valuenum ELSE NULL END) AS hematocrit_max
+  , MIN(CASE WHEN itemid = 51221  THEN valuenum ELSE NULL END) AS hematocrit_min
+    
+  , MAX(CASE WHEN itemid = 51222  THEN valuenum ELSE NULL END) AS hemoglobin_max
+  , MIN(CASE WHEN itemid = 51222  THEN valuenum ELSE NULL END) AS hemoglobin_min
+    
+  , MAX(CASE WHEN itemid = 51265  THEN valuenum ELSE NULL END) AS platelet_max
+  , MIN(CASE WHEN itemid = 51265  THEN valuenum ELSE NULL END) AS platelet_min
+    
+  , MAX(CASE WHEN itemid = 51301 AND valuenum <=   50 AND valuenum  >=  0.5  THEN valuenum ELSE NULL END) AS WBC_max -- K/uL
+  , MIN(CASE WHEN itemid = 51301 AND valuenum <=   50 AND valuenum  >=  0.5  THEN valuenum ELSE NULL END) AS WBC_min -- K/uL    
+ 
+    
+    --   set3
+  , MAX(CASE WHEN itemid = 50861 AND valuenum <=   100 AND valuenum > 0  THEN valuenum ELSE NULL END) AS alanine_max -- IU/L
+  , MIN(CASE WHEN itemid = 50861 AND valuenum <=   100 AND valuenum > 0  THEN valuenum ELSE NULL END) AS alanine_min -- IU/L
+    
+  , MAX(CASE WHEN itemid = 50878 AND valuenum <=   100 AND valuenum > 0  THEN valuenum ELSE NULL END) AS asparate_max -- IU/L
+  , MIN(CASE WHEN itemid = 50878 AND valuenum <=   100 AND valuenum > 0  THEN valuenum ELSE NULL END) AS asparate_min -- IU/L   
+    
+  , MAX(CASE WHEN itemid = 50954 AND valuenum <=   500 AND valuenum > 0  THEN valuenum ELSE NULL END) AS lactate_max-- IU/L
+  , MIN(CASE WHEN itemid = 50954 AND valuenum <=   500 AND valuenum > 0  THEN valuenum ELSE NULL END) AS lactate_min-- IU/L
+    
+  , MAX(CASE WHEN itemid = 50863 AND valuenum <=   300 AND valuenum  > 0  THEN valuenum ELSE NULL END) AS alkaline_max -- IU/L
+  , MIN(CASE WHEN itemid = 50863 AND valuenum <=   300 AND valuenum  > 0  THEN valuenum ELSE NULL END) AS alkaline_min -- IU/L
+   
+    
+  , MAX(CASE WHEN itemid = 51237 AND  valuenum  > 0  THEN valuenum ELSE NULL END) AS INR_max
+  , MIN(CASE WHEN itemid = 51237 AND valuenum  > 0  THEN valuenum ELSE NULL END) AS INR_min
+    
+  , MAX(CASE WHEN itemid = 51275 AND  valuenum  > 0  THEN valuenum ELSE NULL END) AS PTT_max
+  , MIN(CASE WHEN itemid = 51275 AND valuenum  > 0  THEN valuenum ELSE NULL END) AS PTT_min
+    
+  , MAX(CASE WHEN itemid = 51275 AND  valuenum  > 0  THEN valuenum ELSE NULL END) AS PT_max
+  , MIN(CASE WHEN itemid = 51275 AND valuenum  > 0  THEN valuenum ELSE NULL END) AS PT_min
+
+   
+FROM lab le
+WHERE valuenum IS NOT NULL
+-- -- lab values cannot be 0 and cannot be negative
+-- -- .. except anion gap.
+AND (valuenum > 0)
+
+GROUP BY le.subject_id,le.hadm_id	
+-- 	,le.admittime
+-- 	,le.charttime
+-- 	,rank_num
+)
+
+select * from final_set
+-- where subject_id=10000032
+order by subject_id,hadm_id;
+

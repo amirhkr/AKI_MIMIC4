@@ -1,0 +1,110 @@
+DROP TABLE IF EXISTS mimic_derived.all_scr_post_icu; CREATE TABLE mimic_derived.all_scr_post_icu AS 
+
+
+WITH set0 AS(
+    select
+    lab.hadm_id,
+    lab.subject_id,
+    lab.charttime,
+    lab.creatinine
+    ,bl.scr_baseline
+    ,bl.ckd
+
+from mimic_derived.chemistry lab inner join mimic_derived.creatinine_baseline bl
+ON lab.subject_id=bl.subject_id
+-- where lab.subject_id=12466550
+
+)
+
+, set1 AS(
+    SELECT
+    ie.stay_id
+    , ie.hadm_id
+	,ie.subject_id
+	,ie.intime
+	,lab.charttime
+    ,lab.ckd
+    ,lab.creatinine as creatinine_mg_dl
+    ,scr_baseline
+--     , CASE WHEN lab.charttime >= ie.intime THEN DATE_PART('day',(lab.charttime - ie.intime))+1 ELSE (DATE_PART('day',(ie.intime-lab.charttime))+1)*(-1) END as day_of_test
+    , DATE_PART('day',(lab.charttime - ie.intime))+1 day_of_test
+
+    
+FROM mimic_icu.icustays ie  join set0 lab
+    
+on ie.subject_id=lab.subject_id
+    AND lab.charttime between (ie.intime - INTERVAl '6 HOUR')
+    AND (ie.intime + INTERVAl '7 DAY')
+order by ie.stay_id,ie.hadm_id,charttime
+    )
+    
+
+
+, set3 as(
+    select *
+from set1
+
+UNION
+
+select
+    stay_id
+    , hadm_id
+	,subject_id
+--     ,ethnicity
+--     ,female
+--     ,age
+	,intime
+	,charttime
+    ,ckd
+    ,scr_baseline as creatinine_mg_dl
+    ,scr_baseline
+    ,  0 as day_of_test
+from set1
+order by stay_id,hadm_id,subject_id,intime,charttime,day_of_test
+)
+
+-- select * from set3
+
+
+,set4 AS(
+select 
+
+    stay_id
+    , hadm_id
+	,subject_id
+    ,ckd
+    ,creatinine_mg_dl
+    ,round((creatinine_mg_dl*88.4)::numeric,2) AS scr_umol_l
+    ,scr_baseline
+    ,day_of_test
+from set3
+where stay_id in(
+    select stay_id
+    from set3
+    where day_of_test in (0,1,2,3) AND creatinine_mg_dl is not null
+--         AND hadm_id=26652960
+    group by stay_id
+    having count(distinct day_of_test) >= 4
+)
+)
+
+
+select stay_id,hadm_id,subject_id,day_of_test,MIN(ckd) as ckd
+    , MIN(creatinine_mg_dl) AS creatinine_mg_dl
+    ,MIN(scr_umol_l) AS scr_umol_l
+    from set4
+    where day_of_test=1
+    group by stay_id,hadm_id,subject_id,day_of_test
+
+UNION
+
+select stay_id,hadm_id,subject_id,day_of_test,MIN(ckd) as ckd
+    , MAX(creatinine_mg_dl) AS creatinine_mg_dl
+    ,MAX(scr_umol_l) AS scr_umol_l
+    from set4
+    where day_of_test>1
+    group by stay_id,hadm_id,subject_id,day_of_test
+    order by stay_id,hadm_id,subject_id,day_of_test asc
+
+
+

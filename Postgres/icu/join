@@ -1,0 +1,163 @@
+DROP TABLE IF EXISTS mimic_derived.AKI_ICU_JOIN_pre_post; CREATE TABLE mimic_derived.AKI_ICU_JOIN_pre_post AS 
+
+WITH set1 AS(
+    select 
+      agre.stay_id
+    , agre.subject_id
+
+    ,aki_kdigo_grade_1
+    ,aki_kdigo_grade_2
+    ,aki_kdigo_grade_3
+
+    ,day_detection_kdigo_grade_1
+    ,day_detection_kdigo_grade_2
+    ,day_detection_kdigo_grade_3
+
+    ,aki_mkdigo_grade_1
+    ,aki_mkdigo_grade_2
+    ,aki_mkdigo_grade_3
+
+    ,day_detection_mkdigo_grade_1
+    ,day_detection_mkdigo_grade_2
+    ,day_detection_mkdigo_grade_3
+    ,ag.age
+    ,ag.female
+    ,ag.ethnicity
+    
+    from mimic_derived.AKI_ICU_GRADES_AGGREGATE_post agre LEFT JOIN mimic_derived.ICU_age ag
+    ON agre.stay_id=ag.stay_id
+)
+, set2 AS(
+    SELECT
+      set1.*
+    , MHx_coronary_artery_disease
+    , MHx_congestive_heart_failure
+    , MHx_diabetes
+    , MHx_liver_failure
+    , MHx_myocardial_infarction
+    , MHx_peripheral_vascular_disease
+    , MHx_renal_failure
+    
+    
+    FROM set1 LEFT JOIN mimic_derived.AKI_ICU_medical_history MHx
+    ON set1.stay_id = MHx.stay_id
+)
+
+, set3 AS(
+        select
+        set2.* 
+ -- complete blood count
+, hematocrit_min, hematocrit_max
+, hemoglobin_min, hemoglobin_max
+, platelets_min, platelets_max
+, wbc_min, wbc_max
+-- chemistry
+, albumin_min, albumin_max
+, globulin_min, globulin_max
+, total_protein_min, total_protein_max
+, aniongap_min, aniongap_max
+, bicarbonate_min, bicarbonate_max
+, bun_min, bun_max
+, calcium_min, calcium_max
+, chloride_min, chloride_max
+, creatinine_min, creatinine_max
+, glucose_min, glucose_max
+, sodium_min, sodium_max
+, potassium_min, potassium_max
+
+-- coagulation
+, pt_min, pt_max
+, ptt_min, ptt_max
+-- enzymes and bilirubin
+, bilirubin_total_min, bilirubin_total_max
+
+    	--egfr_CKD_EPI WITHOUT ethnicity
+	,round(141*POWER(LEAST(creatinine_max/case when set2.female=0 then 0.9 else 0.7 end,1),case when set2.female=0 then -0.411 else -0.329 end )
+	*
+	POWER(GREATEST(creatinine_max/case when set2.female=0 then 0.9 else 0.7 end,1),-1.209)
+	*
+	POWER(0.993,set2.age)
+	*
+	case when set2.female=1 then 1.018 else 1 end) as egfr_scr_max
+    
+    
+        	--egfr_CKD_EPI WITHOUT ethnicity
+	,round(141*POWER(LEAST(creatinine_min/case when set2.female=0 then 0.9 else 0.7 end,1),case when set2.female=0 then -0.411 else -0.329 end )
+	*
+	POWER(GREATEST(creatinine_min/case when set2.female=0 then 0.9 else 0.7 end,1),-1.209)
+	*
+	POWER(0.993,set2.age)
+	*
+	case when set2.female=1 then 1.018 else 1 end) as egfr_scr_min
+    
+    
+      FROM set2 LEFT JOIN mimic_derived.first_day_lab le
+      ON set2.stay_id=le.stay_id
+)
+
+, set4 AS(
+    SELECT
+      set3.*    
+,  heart_rate_min
+, heart_rate_max
+,  heart_rate_mean
+,  sbp_min
+,  sbp_max
+,  sbp_mean
+,  dbp_min
+,  dbp_max
+,  dbp_mean
+
+,  resp_rate_min
+,  resp_rate_max
+,  resp_rate_mean
+,  temperature_min
+,  temperature_max
+,  temperature_mean
+, spo2_min
+, spo2_max
+
+FROM set3 LEFT JOIN mimic_derived.first_day_vitalsign vs
+    ON set3.stay_id=vs.stay_id
+)
+
+-- , set5 AS(
+--     select
+--         set4.*
+--         , ARBs_ACEi
+--         , Cyclosporine
+--     FROM set4 LEFT JOIN mimic_derived.AKI_ICU_medication_24h med
+--     On set4.stay_id=med.stay_id
+-- )
+
+,set6 AS(
+        SELECT
+        set4.*
+        , BMI
+    FROM set4 LEFT JOIN mimic_derived.ICU_BMI bmi
+    ON set4.stay_id=bmi.stay_id
+)
+-- , set7 AS(
+--         SELECT
+--         set6.*
+--         , ur.urineoutput_24hr
+--     FROM set6 LEFT JOIN mimic_derived.urine_output_rate_6h ur
+--     ON set6.stay_id=ur.stay_id
+-- )
+, set8 AS(
+    select
+        set6.*
+    , mechanical_ventilation
+    from set6 LEFT JOIN mimic_derived.mechanical_ventilation vs
+    ON set6.stay_id=vs.stay_id
+
+    )
+, set9 as(
+    select
+        set8.*
+        , min_day_rrt
+    from set8 LEFT JOIN mimic_derived.min_day_rrt rrt
+    ON set8.stay_id=rrt.stay_id
+)
+select * from set9
+-- where RRT= true

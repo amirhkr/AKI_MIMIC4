@@ -1,0 +1,9 @@
+-- SELECT * FROM mimic_derived."all_scr_SB_preadmisssion_raw_75"
+-- where scr_umol_l>=353.6 and aki_kdigo_grade_3 is true
+
+
+UPDATE mimic_derived."all_scr_SB_preadmisssion_raw_75"
+SET aki_kdigo_grade_1 = true,
+    aki_kdigo_grade_2 = true,
+    aki_kdigo_grade_3 = true
+WHERE scr_umol_l>=353.6;
